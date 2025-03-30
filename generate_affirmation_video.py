@@ -1,37 +1,49 @@
 import os
+from datetime import datetime, timedelta
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
+from moviepy.video.tools.segmenting import findObjects
+import tempfile
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+import pickle
+from PIL import Image, ImageOps
 import json
-import time
-import requests
-import subprocess
-from datetime import datetime
-from moviepy.editor import *
-from PIL import Image
 import openai
+import requests
+import time
 import boto3
 from botocore.exceptions import ClientError
+import subprocess
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# API Keys and Credentials
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-FACEBOOK_ACCESS_TOKEN = os.getenv('FACEBOOK_ACCESS_TOKEN')
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
-AWS_REGION = os.getenv('AWS_REGION')
-
-# Video Settings
+# Constants
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
-FPS = 30
-TOTAL_DURATION = 30  # Total video duration in seconds
-AFFIRMATION_DURATION = 6  # Duration for each affirmation in seconds
-BACKGROUND_MUSIC_VOLUME = 0.3  # Volume level for background music (0.0 to 1.0)
+AFFIRMATION_DURATION = 6  # seconds per affirmation
+TOTAL_DURATION = 30  # total video duration
+BACKGROUND_MUSIC_VOLUME = 0.3  # 30% volume for background music
 
-# API URLs
-FACEBOOK_API_URL = "https://graph.facebook.com/v18.0"
+# API Keys and Credentials from environment variables
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
+SHEET_NAME = 'Video Captions'
+
+# Facebook/Instagram API Configuration
+FACEBOOK_API_URL = 'https://graph.facebook.com/v18.0'
+FACEBOOK_PAGE_ID = os.getenv('FACEBOOK_PAGE_ID')
+FACEBOOK_ACCESS_TOKEN = os.getenv('FACEBOOK_ACCESS_TOKEN')
+
+# AWS S3 Configuration
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+AWS_REGION = os.getenv('AWS_DEFAULT_REGION')
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
 def generate_affirmations_and_caption():
     """Generate affirmations and caption using OpenAI API."""
@@ -110,35 +122,42 @@ def generate_affirmations_and_caption():
     
     return theme, affirmations, caption
 
-def create_affirmation_clip(affirmation, start_time, duration, is_first=False):
-    """Create a clip for a single affirmation with fade in/out effects."""
+def get_predefined_affirmations():
+    """Return a list of predefined affirmations."""
+    return [
+        "I am capable of achieving great things",
+        "I choose to be confident and self-assured",
+        "I attract positive energy and opportunities",
+        "I am worthy of love and respect",
+        "I trust in my journey and growth"
+    ]
+
+def create_affirmation_clip(text, start_time, duration, is_first=False):
+    """Create a video clip for a single affirmation with fade in/out effects."""
     # Create text clip with fade in/out
     text_clip = TextClip(
-        affirmation,
-        fontsize=70,
-        color='white',
-        font='Arial-Bold',
-        size=(VIDEO_WIDTH * 0.8, None),  # Width is 80% of video width
+        text,
+        fontsize=75,  # Increased from 60 to 75
+        color='black',
+        font='assets/fonts/Playfair_Display/PlayfairDisplay-VariableFont_wght.ttf',
+        size=(VIDEO_WIDTH-100, None),
         method='caption',
-        align='center'
+        align='center',
+        stroke_color='black',  # Adding a slight stroke for grainy/bold effect
+        stroke_width=1.5  # Increased stroke width for more boldness
     )
     
     # Position the text in the center
     text_clip = text_clip.set_position('center')
     
-    # Set duration and timing
-    text_clip = text_clip.set_duration(duration)
-    text_clip = text_clip.set_start(start_time)
-    
     # Add fade in/out effects
-    fade_duration = 1.0  # Duration of fade in/out in seconds
+    text_clip = text_clip.set_start(start_time)
+    text_clip = text_clip.set_duration(duration)
     
-    if is_first:
-        # First clip: fade in only
-        text_clip = text_clip.fadein(fade_duration)
-    else:
-        # Other clips: fade in and out
-        text_clip = text_clip.fadein(fade_duration).fadeout(fade_duration)
+    # Only add fade effects if it's not the first affirmation
+    if not is_first:
+        text_clip = text_clip.crossfadein(1.0)
+    text_clip = text_clip.crossfadeout(1.0)
     
     return text_clip
 
@@ -198,70 +217,146 @@ def create_video(affirmations):
     
     return final_video
 
-def encode_video_for_instagram(input_path):
-    """
-    Re-encode video to meet Instagram Reels requirements with updated settings.
-    """
-    output_path = input_path.replace('.mp4', '_instagram.mp4')
+def upload_to_google_drive(file_path):
+    """Upload the video to Google Drive."""
     try:
-        # FFmpeg command with updated Instagram Reels settings
-        cmd = [
-            'ffmpeg', '-i', input_path,
-            '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
-            '-c:v', 'libx264',
-            '-preset', 'medium',     # Better quality preset
-            '-profile:v', 'main',    # Main profile instead of baseline
-            '-level:v', '4.0',       # Higher level for better compatibility
-            '-b:v', '4M',            # Higher bitrate for better quality
-            '-maxrate', '5M',
-            '-bufsize', '5M',
-            '-r', '30',
-            '-fps_mode', 'cfr',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            '-ac', '2',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-y',
-            output_path
-        ]
+        SCOPES = ['https://www.googleapis.com/auth/drive.file']
+        creds = None
         
-        print("\nRe-encoding video for Instagram Reels with updated settings:")
-        print("- Resolution: 1080x1920 (9:16 aspect ratio)")
-        print("- Video codec: H.264 (libx264) main profile")
-        print("- Profile/Level: main/4.0")
-        print("- Frame rate: 30 fps (constant)")
-        print("- Video bitrate: 4 Mbps")
-        print("- Audio codec: AAC-LC")
-        print("- Audio bitrate: 128 Kbps")
-        print("- Audio sample rate: 44.1 kHz")
-        print("- Audio channels: Stereo")
-        print("- Fast start enabled for streaming")
+        # Load saved credentials if they exist
+        if os.path.exists('token.pickle'):
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            print(f"\n❌ Error encoding video: {result.stderr}")
-            return None
+        # If credentials are invalid or don't exist, let the user authenticate
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
             
-        print("\n✅ Video re-encoding complete")
+            # Save credentials for future use
+            with open('token.pickle', 'wb') as token:
+                pickle.dump(creds, token)
         
-        # Verify the output file exists and has a reasonable size
-        if not os.path.exists(output_path):
-            print("\n❌ Error: Output file was not created")
-            return None
-            
-        file_size = os.path.getsize(output_path)
-        print(f"\nOutput file size: {file_size / (1024*1024):.2f} MB")
+        # Create Drive API service
+        service = build('drive', 'v3', credentials=creds)
         
-        if file_size > 100 * 1024 * 1024:  # 100MB
-            print("\n❌ Error: Output file is too large for Instagram (>100MB)")
-            return None
-            
-        return output_path
+        # Get the filename from the path
+        file_name = os.path.basename(file_path)
+        
+        # Prepare the file metadata
+        file_metadata = {
+            'name': file_name,
+            'parents': ['16j0edDvMlMes_LUWOni8qStK4qEQS8TK']  # Updated folder ID
+        }
+        
+        # Upload the file
+        media = MediaFileUpload(file_path, resumable=True)
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+        
+        print(f"File uploaded successfully. File ID: {file.get('id')}")
+        return file.get('id')
+        
     except Exception as e:
-        print(f"\n❌ Error encoding video: {str(e)}")
+        print(f"Error uploading to Google Drive: {str(e)}")
+        return None
+
+def update_spreadsheet(video_name, caption):
+    """Update the Google Sheet with video name and caption."""
+    try:
+        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+        creds = None
+        
+        # Load saved credentials if they exist
+        if os.path.exists('token.pickle'):
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        
+        # If credentials are invalid or don't exist, let the user authenticate
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            
+            # Save credentials for future use
+            with open('token.pickle', 'wb') as token:
+                pickle.dump(creds, token)
+        
+        # Create Sheets API service
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # First, verify the spreadsheet exists and is accessible
+        try:
+            spreadsheet = service.spreadsheets().get(
+                spreadsheetId=SPREADSHEET_ID
+            ).execute()
+            print(f"Successfully connected to spreadsheet: {spreadsheet.get('properties', {}).get('title')}")
+        except Exception as e:
+            print(f"Error accessing spreadsheet: {str(e)}")
+            return False
+        
+        # Get the next empty row
+        range_name = f'{SHEET_NAME}!A:B'
+        try:
+            result = service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID,
+                range=range_name
+            ).execute()
+            
+            values = result.get('values', [])
+            next_row = len(values) + 1
+            
+            # Prepare the data
+            body = {
+                'values': [[video_name, caption]]
+            }
+            
+            # Update the sheet
+            result = service.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f'{SHEET_NAME}!A{next_row}:B{next_row}',
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            
+            print(f"Updated spreadsheet at row {next_row}")
+            return True
+            
+        except Exception as e:
+            print(f"Error updating sheet values: {str(e)}")
+            return False
+        
+    except Exception as e:
+        print(f"Error updating spreadsheet: {str(e)}")
+        return False
+
+def upload_to_imgbb(file_path):
+    """Upload video to ImgBB and return the public URL."""
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'image': f}
+            response = requests.post(
+                'https://api.imgbb.com/1/upload',
+                files=files,
+                data={'key': IMGBB_API_KEY}
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data.get('success'):
+                return data['data']['url']
+            else:
+                print("Error uploading to ImgBB:", data.get('error'))
+                return None
+    except Exception as e:
+        print(f"Error uploading to ImgBB: {str(e)}")
         return None
 
 def upload_to_s3(file_path):
@@ -310,7 +405,30 @@ def upload_to_s3(file_path):
         print(f"Error uploading to S3: {str(e)}")
         return None
 
-def post_to_facebook(video_path, caption, access_token, page_id):
+def get_instagram_account_id(page_id, access_token):
+    """Get the Instagram Business Account ID associated with the Facebook Page."""
+    try:
+        response = requests.get(
+            f"{FACEBOOK_API_URL}/{page_id}",
+            params={
+                'access_token': access_token,
+                'fields': 'instagram_business_account'
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if 'instagram_business_account' in data:
+            return data['instagram_business_account']['id']
+        else:
+            print("No Instagram Business Account found for this Facebook Page")
+            return None
+            
+    except Exception as e:
+        print(f"Error getting Instagram Account ID: {str(e)}")
+        return None
+
+def post_to_facebook(video_path, caption, page_access_token, page_id):
     """Post a video to Facebook"""
     try:
         print("\n=== Starting Facebook Post Process ===")
@@ -319,84 +437,85 @@ def post_to_facebook(video_path, caption, access_token, page_id):
         if not os.path.exists(video_path):
             print(f"Error: Video file not found at {video_path}")
             return False
-        
-        # Upload to S3 and get the URL
-        s3_url = upload_to_s3(video_path)
-        if not s3_url:
-            print("Error: Failed to upload video to S3")
-            return False
             
-        print("\nDebug - Facebook credentials:")
-        print(f"Page ID: {page_id}")
-        print(f"Access Token exists: {bool(access_token)}")
-        
-        # Check access token permissions
+        # Check token permissions
         print("\nChecking access token permissions...")
-        token_response = requests.get(
-            f"{FACEBOOK_API_URL}/me",
-            params={'access_token': access_token, 'fields': 'id,name,permissions'}
+        permissions_response = requests.get(
+            f"{FACEBOOK_API_URL}/debug_token",
+            params={
+                'input_token': page_access_token,
+                'access_token': page_access_token
+            }
         )
+        permissions_data = permissions_response.json()
+        print("\nToken Debug Info:")
+        print(json.dumps(permissions_data, indent=2))
         
-        if token_response.status_code != 200:
-            print(f"Error checking token: {token_response.text}")
+        if 'data' not in permissions_data:
+            print("Error: Invalid token response")
             return False
             
-        token_data = token_response.json()
-        print("\nToken Debug Info:")
-        print(json.dumps(token_data, indent=2))
-        
+        if not permissions_data['data'].get('is_valid', False):
+            print("Error: Token is not valid")
+            return False
+            
         # Get page access token
         print("\nGetting page access token...")
         page_token_response = requests.get(
             f"{FACEBOOK_API_URL}/{page_id}",
-            params={'access_token': access_token, 'fields': 'access_token'}
-        )
-        
-        if page_token_response.status_code != 200:
-            print(f"Error getting page token: {page_token_response.text}")
-            return False
-            
-        page_token = page_token_response.json().get('access_token')
-        if not page_token:
-            print("Error: No page access token in response")
-            return False
-            
-        print("Successfully retrieved page access token")
-        
-        # Upload video to Facebook
-        print("\nUploading video to Facebook...")
-        print("\nSending request to Facebook API...")
-        
-        # Create video upload session
-        upload_response = requests.post(
-            f"{FACEBOOK_API_URL}/{page_id}/videos",
-            params={'access_token': page_token},
-            data={
-                'file_url': s3_url,
-                'description': caption,
-                'privacy': {'value': 'PUBLIC'},
-                'target_id': page_id
+            params={
+                'fields': 'access_token',
+                'access_token': page_access_token
             }
         )
+        page_token_data = page_token_response.json()
         
-        print(f"\nFacebook Response Status: {upload_response.status_code}")
-        print(f"Facebook Response Body: {json.dumps(upload_response.json(), indent=2)}")
+        if 'access_token' in page_token_data:
+            page_access_token = page_token_data['access_token']
+            print("Successfully retrieved page access token")
+        else:
+            print("Using provided access token for posting")
         
-        if upload_response.status_code != 200:
-            print(f"\n❌ Error uploading to Facebook: {upload_response.text}")
-            return False
+        print("\nUploading video to Facebook...")
+        # Upload to Facebook
+        with open(video_path, 'rb') as video_file:
+            files = {
+                'source': ('video.mp4', video_file, 'video/mp4'),
+            }
+            data = {
+                'access_token': page_access_token,
+                'description': caption,
+                'published': 'true'
+            }
             
-        post_id = upload_response.json().get('id')
-        if not post_id:
-            print("\n❌ Error: No post ID in response")
-            return False
+            print("\nSending request to Facebook API...")
+            fb_response = requests.post(
+                f"{FACEBOOK_API_URL}/{page_id}/videos",
+                files=files,
+                data=data
+            )
             
-        print(f"\n✅ Successfully created Facebook post!")
-        print(f"Post ID: {post_id}")
-        return True
+            print("\nFacebook Response Status:", fb_response.status_code)
+            print("Facebook Response Body:", json.dumps(fb_response.json(), indent=2))
+            
+            if fb_response.status_code == 200:
+                fb_data = fb_response.json()
+                if 'id' in fb_data:
+                    print("\n✅ Successfully created Facebook post!")
+                    print(f"Post ID: {fb_data['id']}")
+                    return True
+                else:
+                    print("\n❌ Error: Response successful but no post ID returned")
+                    return False
+            else:
+                print(f"\n❌ Error: Facebook API returned status code {fb_response.status_code}")
+                return False
         
+    except requests.exceptions.RequestException as e:
+        print(f"\n❌ Network error while posting to Facebook: {str(e)}")
+        return False
     except Exception as e:
-        print(f"\n❌ Error posting to Facebook: {str(e)}")
+        print(f"\n❌ Unexpected error while posting to Facebook: {str(e)}")
         return False
 
 def post_to_instagram(video_path, caption, access_token, instagram_account_id):
@@ -521,53 +640,182 @@ def post_to_instagram(video_path, caption, access_token, instagram_account_id):
         print(f"\n❌ Error posting to Instagram: {str(e)}")
         return False
 
-def main():
+def encode_video_for_instagram(input_path):
+    """
+    Re-encode video to meet Instagram Reels requirements with updated settings.
+    """
+    output_path = input_path.replace('.mp4', '_instagram.mp4')
     try:
-        print("Generating theme, affirmations, and caption using OpenAI...")
-        theme, affirmations, caption = generate_affirmations_and_caption()
+        # FFmpeg command with updated Instagram Reels settings
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
+            '-c:v', 'libx264',
+            '-preset', 'medium',     # Better quality preset
+            '-profile:v', 'main',    # Main profile instead of baseline
+            '-level:v', '4.0',       # Higher level for better compatibility
+            '-b:v', '4M',            # Higher bitrate for better quality
+            '-maxrate', '5M',
+            '-bufsize', '5M',
+            '-r', '30',
+            '-fps_mode', 'cfr',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-ac', '2',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            '-y',
+            output_path
+        ]
         
-        print(f"Generated Theme: {theme}")
-        print(f"Generated Affirmations: {affirmations}")
-        print(f"\nGenerated Caption:\n{caption}")
+        print("\nRe-encoding video for Instagram Reels with updated settings:")
+        print("- Resolution: 1080x1920 (9:16 aspect ratio)")
+        print("- Video codec: H.264 (libx264) main profile")
+        print("- Profile/Level: main/4.0")
+        print("- Frame rate: 30 fps (constant)")
+        print("- Video bitrate: 4 Mbps")
+        print("- Audio codec: AAC-LC")
+        print("- Audio bitrate: 128 Kbps")
+        print("- Audio sample rate: 44.1 kHz")
+        print("- Audio channels: Stereo")
+        print("- Fast start enabled for streaming")
         
-        print("\nCreating video...")
-        final_video = create_video(affirmations)
+        result = subprocess.run(cmd, capture_output=True, text=True)
         
-        # Generate output filename with date
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        output_filename = f"{theme}_{date_str}.mp4"
-        output_path = os.path.join("output", output_filename)
+        if result.returncode != 0:
+            print(f"\n❌ Error encoding video: {result.stderr}")
+            return None
+            
+        print("\n✅ Video re-encoding complete")
         
-        print(f"Writing video to {output_path}...")
-        final_video.write_videofile(
-            output_path,
-            fps=FPS,
-            codec='libx264',
-            audio_codec='aac',
-            temp_audiofile="temp-audio.m4a",
-            remove_temp=True
-        )
+        # Verify the output file exists and has a reasonable size
+        if not os.path.exists(output_path):
+            print("\n❌ Error: Output file was not created")
+            return None
+            
+        file_size = os.path.getsize(output_path)
+        print(f"\nOutput file size: {file_size / (1024*1024):.2f} MB")
         
-        print("\nScheduling posts on social media...")
+        if file_size > 100 * 1024 * 1024:  # 100MB
+            print("\n❌ Error: Output file is too large for Instagram (>100MB)")
+            return None
+            
+        return output_path
+    except Exception as e:
+        print(f"\n❌ Error encoding video: {str(e)}")
+        return None
+
+def schedule_social_media_post(video_path, caption):
+    """Schedule a post on social media platforms"""
+    try:
+        # Upload to Google Drive
+        file_id = upload_to_google_drive(video_path)
+        print(f"Video uploaded to Google Drive with ID: {file_id}")
+        
+        # Update spreadsheet
+        try:
+            update_spreadsheet(video_path, caption)
+        except Exception as e:
+            print(f"Error accessing spreadsheet: {str(e)}")
+        
+        # Upload to S3
+        s3_url = upload_to_s3(video_path)
+        print(f"Video uploaded to S3: {s3_url}")
+        
+        # Get Facebook credentials
+        page_id = os.getenv('FACEBOOK_PAGE_ID')
+        access_token = os.getenv('FACEBOOK_ACCESS_TOKEN')
+        
+        print("Debug - Facebook credentials:")
+        print(f"Page ID: {page_id}")
+        print(f"Access Token exists: {bool(access_token)}")
         
         # Post to Facebook
-        facebook_page_id = "677046102147244"  # Your Facebook page ID
-        facebook_success = post_to_facebook(output_path, caption, FACEBOOK_ACCESS_TOKEN, facebook_page_id)
+        if post_to_facebook(video_path, caption, access_token, page_id):
+            print("Posted to Facebook successfully")
         
-        # Post to Instagram
-        instagram_account_id = "17841473640524473"  # Your Instagram account ID
-        instagram_success = post_to_instagram(output_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
+        # Get Instagram account ID
+        instagram_account_id = get_instagram_account_id(page_id, access_token)
+        print(f"Debug - Instagram Account ID: {instagram_account_id}")
         
-        if not facebook_success or not instagram_success:
-            print("\nFailed to schedule social media posts")
-        else:
-            print("\nSuccessfully scheduled all social media posts")
-            
-        print("\nVideo generation complete!")
+        if instagram_account_id:
+            # Re-encode video for Instagram
+            instagram_video_path = encode_video_for_instagram(video_path)
+            if instagram_video_path:
+                # Upload Instagram version to S3
+                instagram_s3_url = upload_to_s3(instagram_video_path)
+                print(f"Re-encoded video uploaded to S3: {instagram_s3_url}")
+                
+                # Post to Instagram
+                if post_to_instagram(instagram_video_path, caption, access_token, instagram_account_id):
+                    print("Posted to Instagram successfully")
+                    return True
+        
+        return False
         
     except Exception as e:
-        print(f"\n❌ Error in main process: {str(e)}")
-        raise
+        print(f"Error scheduling social media post: {str(e)}")
+        return False
+
+def main():
+    # Generate theme, affirmations, and caption using OpenAI
+    print("Generating theme, affirmations, and caption using OpenAI...")
+    theme, affirmations, caption = generate_affirmations_and_caption()
+    print(f"Generated Theme: {theme}")
+    print("Generated Affirmations:", affirmations)
+    print("\nGenerated Caption:")
+    print(caption)
+    
+    # Create video
+    print("\nCreating video...")
+    video = create_video(affirmations)
+    
+    # Generate output filename with theme and current date
+    output_filename = f"{theme}_{datetime.now().strftime('%Y-%m-%d')}.mp4"
+    
+    # Create output directory in the current folder
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, output_filename)
+    
+    # Write video file
+    print(f"Writing video to {output_path}...")
+    video.write_videofile(
+        output_path,
+        fps=30,
+        codec='libx264',
+        audio_codec='aac',
+        temp_audiofile="temp-audio.m4a",
+        remove_temp=True
+    )
+    
+    # Clean up temporary files
+    if os.path.exists("temp_background.jpg"):
+        os.remove("temp_background.jpg")
+    
+    # Try to upload to Google Drive if credentials exist
+    if os.path.exists('credentials.json'):
+        print("Uploading to Google Drive...")
+        try:
+            upload_to_google_drive(output_path)
+            # Update spreadsheet with video name and caption
+            print("Updating spreadsheet...")
+            update_spreadsheet(output_filename, caption)
+            
+            # Schedule posts on social media
+            print("Scheduling posts on social media...")
+            if not schedule_social_media_post(output_path, caption):
+                print("Failed to schedule social media posts")
+            
+        except Exception as e:
+            print(f"Failed to upload to Google Drive, update spreadsheet, or schedule social media posts: {e}")
+    else:
+        print("Skipping Google Drive upload (credentials.json not found)")
+    
+    # Clean up
+    video.close()
+    print("Video generation complete!")
 
 if __name__ == "__main__":
     main() 

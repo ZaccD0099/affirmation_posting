@@ -1,70 +1,54 @@
 # Daily Affirmation Video Generator
 
-This project automatically generates and posts daily affirmation videos to Facebook and Instagram using AI-generated content.
+This script automatically generates daily affirmation videos suitable for Instagram Reels and TikTok. It creates 30-second videos with 5 affirmations, background music, and smooth transitions.
 
 ## Features
 
-- Generates unique daily affirmations using OpenAI's GPT-4
-- Creates beautiful video content with affirmations
-- Posts automatically to Facebook and Instagram
-- Runs daily via GitHub Actions
-- Stores videos in AWS S3
+- Generates 5 unique affirmations using OpenAI API
+- Creates vertical (1080x1920) videos
+- Includes background music and image
+- Smooth fade transitions between affirmations
+- Automatic upload to Google Drive
+- Daily date-stamped output files
 
 ## Setup
 
-1. Clone the repository:
-```bash
-git clone https://github.com/ZaccD0099/affirmation_posting.git
-cd affirmation_posting
-```
-
-2. Install dependencies:
+1. Install the required dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file with your API keys:
-```
-OPENAI_API_KEY=your_openai_key
-FACEBOOK_ACCESS_TOKEN=your_facebook_token
-AWS_ACCESS_KEY_ID=your_aws_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret
-S3_BUCKET_NAME=your_bucket_name
-AWS_REGION=your_aws_region
-```
+2. Create an `assets` folder in the project directory and add:
+   - `background_image_standard.jpg` - Your background image
+   - `background_music_ambient.mp3` - Your background music track
 
-4. Add your assets:
-- Place your background image as `assets/Iphone_Affirmation_Background.jpg`
-- Place your background music as `assets/background_music_ambient.mp3`
+3. Set up Google Drive API:
+   - Go to the Google Cloud Console
+   - Create a new project
+   - Enable the Google Drive API
+   - Create credentials (OAuth 2.0 Client ID)
+   - Download the credentials and save as `credentials.json` in the project directory
 
-## GitHub Actions Setup
+4. The first time you run the script, it will prompt you to authenticate with Google Drive.
 
-1. Go to your repository's Settings > Secrets and Variables > Actions
-2. Add the following secrets:
-   - `OPENAI_API_KEY`
-   - `FACEBOOK_ACCESS_TOKEN`
-   - `AWS_ACCESS_KEY_ID`
-   - `AWS_SECRET_ACCESS_KEY`
-   - `S3_BUCKET_NAME`
-   - `AWS_REGION`
+## Usage
 
-The workflow will run daily at 9:00 AM UTC (4:00 AM EST) and can also be triggered manually.
-
-## Local Development
-
-To run the script locally:
+Run the script:
 ```bash
 python generate_affirmation_video.py
 ```
 
-## Project Structure
+The script will:
+1. Generate 5 affirmations using OpenAI
+2. Create a video with the affirmations
+3. Save the video to `~/Google Drive/My Drive/Affirmation_Videos/`
+4. Upload the video to Google Drive
 
-- `generate_affirmation_video.py`: Main script for video generation and posting
-- `assets/`: Directory containing background image and music
-- `output/`: Directory where generated videos are saved
-- `.github/workflows/`: GitHub Actions workflow configuration
-- `requirements.txt`: Python dependencies
+The output video will be named `affirmation_YYYY-MM-DD.mp4`.
 
-## License
+## Requirements
 
-MIT License 
+- Python 3.7+
+- OpenAI API key
+- Google Drive API credentials
+- Background image and music files 
