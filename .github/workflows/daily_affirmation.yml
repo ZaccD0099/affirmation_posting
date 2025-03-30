@@ -45,21 +45,17 @@ jobs:
     - name: Create assets directory
       run: mkdir -p assets
       
-    - name: Download background image
+    - name: Check for assets
       run: |
-        curl -o assets/Iphone_Affirmation_Background.jpg https://raw.githubusercontent.com/ZaccD0099/affirmation_posting/main/assets/Iphone_Affirmation_Background.jpg
         if [ ! -f "assets/Iphone_Affirmation_Background.jpg" ]; then
-          echo "Failed to download background image"
+          echo "Background image not found in repository"
           exit 1
         fi
-        
-    - name: Download background music
-      run: |
-        curl -o assets/background_music_ambient.mp3 https://raw.githubusercontent.com/ZaccD0099/affirmation_posting/main/assets/background_music_ambient.mp3
         if [ ! -f "assets/background_music_ambient.mp3" ]; then
-          echo "Failed to download background music"
+          echo "Background music not found in repository"
           exit 1
         fi
+        echo "Assets found successfully"
         
     - name: Run affirmation script with retries
       env:
@@ -91,6 +87,7 @@ jobs:
           echo "No video file was generated"
           exit 1
         fi
+        echo "Video generated successfully"
       
     - name: Upload generated video
       uses: actions/upload-artifact@v3
