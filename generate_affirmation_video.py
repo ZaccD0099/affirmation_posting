@@ -11,7 +11,7 @@ from googleapiclient.http import MediaFileUpload
 import pickle
 from PIL import Image, ImageOps
 import json
-import openai
+from openai import OpenAI
 import requests
 import time
 import boto3
@@ -35,6 +35,9 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
 SHEET_NAME = 'Video Captions'
 
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 # Facebook/Instagram API Configuration
 FACEBOOK_API_URL = 'https://graph.facebook.com/v18.0'
 FACEBOOK_PAGE_ID = os.getenv('FACEBOOK_PAGE_ID')
@@ -48,8 +51,6 @@ S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
 def generate_affirmations_and_caption():
     """Generate affirmations and caption using OpenAI API."""
-    openai.api_key = OPENAI_API_KEY
-    
     # First, generate a theme
     theme_prompt = """Generate a single word theme for daily affirmations. The theme should be:
     1. Positive and uplifting
@@ -61,7 +62,7 @@ def generate_affirmations_and_caption():
     
     Return just the single word theme."""
     
-    theme_response = openai.ChatCompletion.create(
+    theme_response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a professional content creator."},
@@ -69,7 +70,7 @@ def generate_affirmations_and_caption():
         ]
     )
     
-    theme = theme_response.choices[0].message['content'].strip()
+    theme = theme_response.choices[0].message.content.strip()
     
     # Generate affirmations based on theme
     affirmations_prompt = f"""Generate 5 unique, powerful affirmations based on the theme "{theme}" that are:
@@ -90,7 +91,7 @@ def generate_affirmations_and_caption():
     Format your response as a JSON array of strings, like this:
     {{"affirmations": ["affirmation1", "affirmation2", "affirmation3", "affirmation4", "affirmation5"]}}"""
     
-    affirmations_response = openai.ChatCompletion.create(
+    affirmations_response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a professional affirmation writer."},
@@ -98,7 +99,7 @@ def generate_affirmations_and_caption():
         ]
     )
     
-    affirmations = json.loads(affirmations_response.choices[0].message['content'])["affirmations"]
+    affirmations = json.loads(affirmations_response.choices[0].message.content)["affirmations"]
     
     # Generate short caption
     caption_prompt = f"""Create a short, engaging Instagram caption for a video with theme "{theme}" containing these affirmations:
@@ -111,7 +112,7 @@ def generate_affirmations_and_caption():
     4. Focus on the theme: {theme}
     5. End with these hashtags: #Affirmations #dailyAffirmations #DailyAffirmationJournal"""
     
-    caption_response = openai.ChatCompletion.create(
+    caption_response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a professional social media content creator."},
@@ -119,7 +120,7 @@ def generate_affirmations_and_caption():
         ]
     )
     
-    caption = caption_response.choices[0].message['content'].strip()
+    caption = caption_response.choices[0].message.content.strip()
     
     return theme, affirmations, caption
 
