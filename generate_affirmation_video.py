@@ -165,59 +165,91 @@ def create_affirmation_clip(text, start_time, duration, is_first=False):
 
 def create_video(affirmations):
     """Create the final video with all affirmations and background music."""
-    # Load background image (expecting a JPG or PNG file)
-    background_path = "assets/Iphone_Affirmation_Background.jpg"  # Updated filename
-    if not os.path.exists(background_path):
-        raise FileNotFoundError(f"Background image not found at {background_path}")
-    
-    # Load and resize background image using PIL
-    with Image.open(background_path) as img:
-        img = img.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
-        img.save("temp_background.jpg")
-    
-    # Load background image
-    background = ImageClip("temp_background.jpg")
-    background = background.set_duration(TOTAL_DURATION)
-    
-    # Load background music
-    background_music = AudioFileClip("assets/background_music_ambient.mp3")
-    background_music = background_music.set_duration(TOTAL_DURATION)
-    background_music = background_music.volumex(BACKGROUND_MUSIC_VOLUME)
-    
-    # Create clips for each affirmation
-    affirmation_clips = []
-    for i, affirmation in enumerate(affirmations):
-        start_time = i * AFFIRMATION_DURATION
-        clip = create_affirmation_clip(affirmation, start_time, AFFIRMATION_DURATION, is_first=(i == 0))
-        affirmation_clips.append(clip)
-    
-    # Combine all clips
-    final_video = CompositeVideoClip(
-        [background] + affirmation_clips,
-        size=(VIDEO_WIDTH, VIDEO_HEIGHT)
-    )
-    
-    # Set audio
-    final_video = final_video.set_audio(background_music)
-    
-    # Verify video meets Instagram requirements
-    if final_video.duration < 3:
-        print("Warning: Video duration is less than 3 seconds. Instagram requires at least 3 seconds.")
-        # Extend the video to meet minimum duration
-        final_video = final_video.set_duration(3)
-    
-    if final_video.audio is None:
-        print("Warning: Video has no audio. Adding silent audio track.")
-        # Add silent audio track
-        silent_audio = AudioClip(lambda t: 0, duration=final_video.duration)
-        final_video = final_video.set_audio(silent_audio)
-    
-    # Verify aspect ratio
-    if final_video.w != 1080 or final_video.h != 1920:
-        print("Warning: Video aspect ratio is not 9:16 (1080x1920). Resizing...")
-        final_video = final_video.resize((1080, 1920))
-    
-    return final_video
+    try:
+        # Load background image (expecting a JPG or PNG file)
+        background_path = "assets/Iphone_Affirmation_Background.jpg"
+        if not os.path.exists(background_path):
+            raise FileNotFoundError(f"Background image not found at {background_path}")
+        
+        # Load and resize background image using PIL
+        with Image.open(background_path) as img:
+            img = img.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
+            img.save("temp_background.jpg")
+        
+        # Load background image
+        background = ImageClip("temp_background.jpg")
+        background = background.set_duration(TOTAL_DURATION)
+        
+        # Load background music with optimized settings
+        background_music = AudioFileClip("assets/background_music_ambient.mp3")
+        background_music = background_music.set_duration(TOTAL_DURATION)
+        background_music = background_music.volumex(BACKGROUND_MUSIC_VOLUME)
+        
+        # Create clips for each affirmation
+        affirmation_clips = []
+        for i, affirmation in enumerate(affirmations):
+            start_time = i * AFFIRMATION_DURATION
+            clip = create_affirmation_clip(affirmation, start_time, AFFIRMATION_DURATION, is_first=(i == 0))
+            affirmation_clips.append(clip)
+        
+        # Combine all clips
+        final_video = CompositeVideoClip(
+            [background] + affirmation_clips,
+            size=(VIDEO_WIDTH, VIDEO_HEIGHT)
+        )
+        
+        # Set audio
+        final_video = final_video.set_audio(background_music)
+        
+        # Verify video meets Instagram requirements
+        if final_video.duration < 3:
+            print("Warning: Video duration is less than 3 seconds. Instagram requires at least 3 seconds.")
+            final_video = final_video.set_duration(3)
+        
+        if final_video.audio is None:
+            print("Warning: Video has no audio. Adding silent audio track.")
+            silent_audio = AudioClip(lambda t: 0, duration=final_video.duration)
+            final_video = final_video.set_audio(silent_audio)
+        
+        # Verify aspect ratio
+        if final_video.w != 1080 or final_video.h != 1920:
+            print("Warning: Video aspect ratio is not 9:16 (1080x1920). Resizing...")
+            final_video = final_video.resize((1080, 1920))
+        
+        # Write video with optimized settings
+        output_path = f"output/{affirmations[0].split()[1]}_{datetime.now().strftime('%Y-%m-%d')}.mp4"
+        print(f"Writing video to {output_path}...")
+        
+        # Use optimized encoding settings
+        final_video.write_videofile(
+            output_path,
+            fps=30,
+            codec='libx264',
+            audio_codec='aac',
+            preset='ultrafast',  # Faster encoding, slightly larger file
+            threads=2,  # Limit thread usage
+            bitrate='2000k',  # Lower bitrate
+            audio_bitrate='128k',  # Lower audio bitrate
+            ffmpeg_params=['-max_muxing_queue_size', '1024']  # Prevent queue overflow
+        )
+        
+        # Clean up resources
+        final_video.close()
+        background.close()
+        background_music.close()
+        for clip in affirmation_clips:
+            clip.close()
+        
+        # Remove temporary files
+        if os.path.exists("temp_background.jpg"):
+            os.remove("temp_background.jpg")
+        
+        return output_path
+        
+    except Exception as e:
+        print(f"Error in create_video: {str(e)}")
+        traceback.print_exc()
+        raise
 
 def upload_to_google_drive(file_path):
     """Upload the video to Google Drive."""
@@ -740,61 +772,43 @@ def schedule_social_media_post(video_path, caption):
         return False
 
 def main():
-    """Main function to generate and post affirmation video."""
+    """Main function to generate and post affirmations."""
     try:
         # Generate affirmations and caption
         theme, affirmations, caption = generate_affirmations_and_caption()
-        print(f"Generated Theme: {theme}")
-        print("Generated Affirmations:", affirmations)
-        print("\nGenerated Caption:")
-        print(caption)
+        print(f"\nGenerated Theme: {theme}")
+        print(f"Generated Affirmations: {affirmations}")
+        print(f"\nGenerated Caption:\n{caption}\n")
         
         # Create video
         print("\nCreating video...")
-        video = create_video(affirmations)
+        video_path = create_video(affirmations)
         
-        # Save video
-        output_dir = "output"
-        os.makedirs(output_dir, exist_ok=True)
-        video_path = os.path.join(output_dir, f"{theme}_{datetime.now().strftime('%Y-%m-%d')}.mp4")
-        print(f"Writing video to {video_path}...")
-        video.write_videofile(
-            video_path,
-            fps=30,
-            codec='libx264',
-            audio_codec='aac',
-            temp_audiofile="temp-audio.m4a",
-            remove_temp=True
-        )
-        
+        # Schedule posts on social media
         print("\nScheduling posts on social media...")
         
-        # Upload to S3 and get URL
+        # Upload to S3
+        print(f"Uploading {os.path.basename(video_path)} to S3...")
         s3_url = upload_to_s3(video_path)
-        if not s3_url:
-            print("Failed to upload video to S3")
-            return
-        print(f"Video uploaded to S3: {s3_url}")
+        print(f"Successfully uploaded to S3. Public URL: {s3_url}")
+        
+        # Verify S3 URL is accessible
+        verify_s3_url(s3_url)
         
         # Post to Facebook
-        facebook_success = post_to_facebook(video_path, caption)
+        print("\n=== Starting Facebook Post Process ===\n")
+        post_to_facebook(s3_url, caption)
         
         # Post to Instagram
-        instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN))
+        print("\n=== Starting Instagram Post Process ===\n")
+        post_to_instagram(s3_url, caption)
         
-        if not facebook_success or not instagram_success:
-            print("Failed to schedule social media posts")
-        
-        # Clean up temporary files
-        if os.path.exists("temp_background.jpg"):
-            os.remove("temp_background.jpg")
-        video.close()
-        
-        print("Video generation complete!")
+        print("\nVideo generation complete!")
         
     except Exception as e:
-        print(f"Error in main function: {str(e)}")
+        print(f"\nError in main function: {str(e)}")
         traceback.print_exc()
+        raise
 
 if __name__ == "__main__":
     main() 
