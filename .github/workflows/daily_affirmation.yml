@@ -90,7 +90,7 @@ jobs:
         echo "Video generated successfully"
       
     - name: Upload generated video
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v3.1.2
       with:
         name: affirmation-video
         path: output/*.mp4
