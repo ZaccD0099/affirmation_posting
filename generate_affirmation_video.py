@@ -18,6 +18,7 @@ import boto3
 from botocore.exceptions import ClientError
 import subprocess
 from dotenv import load_dotenv
+import traceback
 
 # Load environment variables
 load_dotenv()
@@ -428,69 +429,66 @@ def get_instagram_account_id(page_id, access_token):
         print(f"Error getting Instagram Account ID: {str(e)}")
         return None
 
-def post_to_facebook(video_path, caption, page_access_token, page_id):
+def post_to_facebook(video_path, caption):
     """Post a video to Facebook"""
     try:
         print("\n=== Starting Facebook Post Process ===")
         
-        # Check if video file exists
-        if not os.path.exists(video_path):
-            print(f"Error: Video file not found at {video_path}")
-            return False
-            
         # Check token permissions
         print("\nChecking access token permissions...")
-        permissions_response = requests.get(
+        token_response = requests.get(
             f"{FACEBOOK_API_URL}/debug_token",
             params={
-                'input_token': page_access_token,
-                'access_token': page_access_token
+                'input_token': FACEBOOK_ACCESS_TOKEN,
+                'access_token': FACEBOOK_ACCESS_TOKEN
             }
         )
-        permissions_data = permissions_response.json()
-        print("\nToken Debug Info:")
-        print(json.dumps(permissions_data, indent=2))
         
-        if 'data' not in permissions_data:
-            print("Error: Invalid token response")
-            return False
-            
-        if not permissions_data['data'].get('is_valid', False):
+        print("\nToken Debug Info:")
+        print(json.dumps(token_response.json(), indent=2))
+        
+        if not token_response.json().get('data', {}).get('is_valid'):
             print("Error: Token is not valid")
             return False
             
         # Get page access token
         print("\nGetting page access token...")
         page_token_response = requests.get(
-            f"{FACEBOOK_API_URL}/{page_id}",
+            f"{FACEBOOK_API_URL}/{FACEBOOK_PAGE_ID}",
             params={
                 'fields': 'access_token',
-                'access_token': page_access_token
+                'access_token': FACEBOOK_ACCESS_TOKEN
             }
         )
-        page_token_data = page_token_response.json()
         
-        if 'access_token' in page_token_data:
-            page_access_token = page_token_data['access_token']
-            print("Successfully retrieved page access token")
-        else:
-            print("Using provided access token for posting")
+        if page_token_response.status_code != 200:
+            print(f"Error getting page access token: {page_token_response.text}")
+            return False
+            
+        page_token_data = page_token_response.json()
+        if 'access_token' not in page_token_data:
+            print("Error: No page access token in response")
+            return False
+            
+        page_access_token = page_token_data['access_token']
+        print("Successfully retrieved page access token")
         
         print("\nUploading video to Facebook...")
-        # Upload to Facebook
+        
+        # Upload video to Facebook
         with open(video_path, 'rb') as video_file:
             files = {
-                'source': ('video.mp4', video_file, 'video/mp4'),
+                'source': (os.path.basename(video_path), video_file, 'video/mp4')
             }
             data = {
-                'access_token': page_access_token,
+                'access_token': page_access_token,  # Use page access token
                 'description': caption,
                 'published': 'true'
             }
             
             print("\nSending request to Facebook API...")
             fb_response = requests.post(
-                f"{FACEBOOK_API_URL}/{page_id}/videos",
+                f"{FACEBOOK_API_URL}/{FACEBOOK_PAGE_ID}/videos",
                 files=files,
                 data=data
             )
@@ -498,24 +496,21 @@ def post_to_facebook(video_path, caption, page_access_token, page_id):
             print("\nFacebook Response Status:", fb_response.status_code)
             print("Facebook Response Body:", json.dumps(fb_response.json(), indent=2))
             
-            if fb_response.status_code == 200:
-                fb_data = fb_response.json()
-                if 'id' in fb_data:
-                    print("\n✅ Successfully created Facebook post!")
-                    print(f"Post ID: {fb_data['id']}")
-                    return True
-                else:
-                    print("\n❌ Error: Response successful but no post ID returned")
-                    return False
-            else:
+            if fb_response.status_code != 200:
                 print(f"\n❌ Error: Facebook API returned status code {fb_response.status_code}")
                 return False
-        
-    except requests.exceptions.RequestException as e:
-        print(f"\n❌ Network error while posting to Facebook: {str(e)}")
-        return False
+            
+            response_data = fb_response.json()
+            if 'id' in response_data:
+                print("\n✅ Successfully created Facebook post!")
+                print(f"Post ID: {response_data['id']}")
+                return True
+            else:
+                print("\n❌ Error: No post ID in response")
+                return False
+                
     except Exception as e:
-        print(f"\n❌ Unexpected error while posting to Facebook: {str(e)}")
+        print(f"\n❌ Error posting to Facebook: {str(e)}")
         return False
 
 def post_to_instagram(video_path, caption, access_token, instagram_account_id):
@@ -723,99 +718,82 @@ def schedule_social_media_post(video_path, caption):
         s3_url = upload_to_s3(video_path)
         print(f"Video uploaded to S3: {s3_url}")
         
-        # Get Facebook credentials
-        page_id = os.getenv('FACEBOOK_PAGE_ID')
-        access_token = os.getenv('FACEBOOK_ACCESS_TOKEN')
-        
-        print("Debug - Facebook credentials:")
-        print(f"Page ID: {page_id}")
-        print(f"Access Token exists: {bool(access_token)}")
-        
         # Post to Facebook
-        if post_to_facebook(video_path, caption, access_token, page_id):
-            print("Posted to Facebook successfully")
+        facebook_success = post_to_facebook(video_path, caption)
         
         # Get Instagram account ID
-        instagram_account_id = get_instagram_account_id(page_id, access_token)
+        instagram_account_id = get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN)
         print(f"Debug - Instagram Account ID: {instagram_account_id}")
         
         if instagram_account_id:
-            # Re-encode video for Instagram
-            instagram_video_path = encode_video_for_instagram(video_path)
-            if instagram_video_path:
-                # Upload Instagram version to S3
-                instagram_s3_url = upload_to_s3(instagram_video_path)
-                print(f"Re-encoded video uploaded to S3: {instagram_s3_url}")
-                
-                # Post to Instagram
-                if post_to_instagram(instagram_video_path, caption, access_token, instagram_account_id):
-                    print("Posted to Instagram successfully")
-                    return True
+            # Post to Instagram
+            instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
         
-        return False
+        if not facebook_success or not instagram_success:
+            print("Failed to schedule social media posts")
+        
+        return True
         
     except Exception as e:
         print(f"Error scheduling social media post: {str(e)}")
         return False
 
 def main():
-    # Generate theme, affirmations, and caption using OpenAI
-    print("Generating theme, affirmations, and caption using OpenAI...")
-    theme, affirmations, caption = generate_affirmations_and_caption()
-    print(f"Generated Theme: {theme}")
-    print("Generated Affirmations:", affirmations)
-    print("\nGenerated Caption:")
-    print(caption)
-    
-    # Create video
-    print("\nCreating video...")
-    video = create_video(affirmations)
-    
-    # Generate output filename with theme and current date
-    output_filename = f"{theme}_{datetime.now().strftime('%Y-%m-%d')}.mp4"
-    
-    # Create output directory in the current folder
-    output_dir = "output"
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, output_filename)
-    
-    # Write video file
-    print(f"Writing video to {output_path}...")
-    video.write_videofile(
-        output_path,
-        fps=30,
-        codec='libx264',
-        audio_codec='aac',
-        temp_audiofile="temp-audio.m4a",
-        remove_temp=True
-    )
-    
-    # Clean up temporary files
-    if os.path.exists("temp_background.jpg"):
-        os.remove("temp_background.jpg")
-    
-    # Try to upload to Google Drive if credentials exist
-    if os.path.exists('credentials.json'):
-        print("Uploading to Google Drive...")
-        try:
-            upload_to_google_drive(output_path)
-            # Update spreadsheet with video name and caption
-            print("Updating spreadsheet...")
-            update_spreadsheet(output_filename, caption)
-            
-            # Schedule posts on social media
-            print("Scheduling posts on social media...")
-            if not schedule_social_media_post(output_path, caption):
-                print("Failed to schedule social media posts")
-            
-        except Exception as e:
-            print(f"Failed to upload to Google Drive, update spreadsheet, or schedule social media posts: {e}")
-    else:
-        print("Skipping Google Drive upload (credentials.json not found)")
-    
-    # Clean up
-    video.close()
-    print("Video generation complete!")
+    """Main function to generate and post affirmation video."""
+    try:
+        # Generate affirmations and caption
+        theme, affirmations, caption = generate_affirmations_and_caption()
+        print(f"Generated Theme: {theme}")
+        print("Generated Affirmations:", affirmations)
+        print("\nGenerated Caption:")
+        print(caption)
+        
+        # Create video
+        print("\nCreating video...")
+        video = create_video(affirmations)
+        
+        # Save video
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+        video_path = os.path.join(output_dir, f"{theme}_{datetime.now().strftime('%Y-%m-%d')}.mp4")
+        print(f"Writing video to {video_path}...")
+        video.write_videofile(
+            video_path,
+            fps=30,
+            codec='libx264',
+            audio_codec='aac',
+            temp_audiofile="temp-audio.m4a",
+            remove_temp=True
+        )
+        
+        print("\nScheduling posts on social media...")
+        
+        # Upload to S3 and get URL
+        s3_url = upload_to_s3(video_path)
+        if not s3_url:
+            print("Failed to upload video to S3")
+            return
+        print(f"Video uploaded to S3: {s3_url}")
+        
+        # Post to Facebook
+        facebook_success = post_to_facebook(video_path, caption)
+        
+        # Post to Instagram
+        instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN))
+        
+        if not facebook_success or not instagram_success:
+            print("Failed to schedule social media posts")
+        
+        # Clean up temporary files
+        if os.path.exists("temp_background.jpg"):
+            os.remove("temp_background.jpg")
+        video.close()
+        
+        print("Video generation complete!")
+        
+    except Exception as e:
+        print(f"Error in main function: {str(e)}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main() 
