@@ -1,0 +1,64 @@
+name: Daily Affirmation Post
+
+on:
+  schedule:
+    # Times are in UTC (CST + 6 hours)
+    - cron: '0 12 * * *'  # 6:00 AM CST
+    - cron: '0 14 * * *'  # 8:00 AM CST
+    - cron: '0 16 * * *'  # 10:00 AM CST
+    - cron: '0 18 * * *'  # 12:00 PM CST
+    - cron: '0 20 * * *'  # 2:00 PM CST
+    - cron: '0 22 * * *'  # 4:00 PM CST
+    - cron: '0 0 * * *'   # 6:00 PM CST
+    - cron: '0 2 * * *'   # 8:00 PM CST
+    - cron: '0 4 * * *'   # 10:00 PM CST
+    - cron: '0 6 * * *'   # 12:00 AM CST
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  generate-and-post:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install moviepy pillow openai boto3 python-dotenv requests
+        
+    - name: Create output directory
+      run: mkdir -p output
+      
+    - name: Create assets directory
+      run: mkdir -p assets
+      
+    - name: Download background image
+      run: |
+        curl -o assets/Iphone_Affirmation_Background.jpg https://raw.githubusercontent.com/ZaccD0099/affirmation_posting/main/assets/Iphone_Affirmation_Background.jpg
+        
+    - name: Download background music
+      run: |
+        curl -o assets/background_music_ambient.mp3 https://raw.githubusercontent.com/ZaccD0099/affirmation_posting/main/assets/background_music_ambient.mp3
+        
+    - name: Run affirmation script
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+      run: python generate_affirmation_video.py
+      
+    - name: Upload generated video
+      uses: actions/upload-artifact@v3
+      with:
+        name: affirmation-video
+        path: output/*.mp4 
