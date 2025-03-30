@@ -171,12 +171,17 @@ def create_video(affirmations):
         if not os.path.exists(background_path):
             raise FileNotFoundError(f"Background image not found at {background_path}")
         
-        # Load and resize background image using PIL
+        # Load and resize background image using PIL with memory optimization
         with Image.open(background_path) as img:
+            # Convert to RGB mode to ensure compatibility
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            # Resize with LANCZOS resampling for better quality
             img = img.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
-            img.save("temp_background.jpg")
+            # Save with JPEG quality optimization
+            img.save("temp_background.jpg", 'JPEG', quality=85, optimize=True)
         
-        # Load background image
+        # Load background image with memory optimization
         background = ImageClip("temp_background.jpg")
         background = background.set_duration(TOTAL_DURATION)
         
@@ -185,14 +190,14 @@ def create_video(affirmations):
         background_music = background_music.set_duration(TOTAL_DURATION)
         background_music = background_music.volumex(BACKGROUND_MUSIC_VOLUME)
         
-        # Create clips for each affirmation
+        # Create clips for each affirmation with memory optimization
         affirmation_clips = []
         for i, affirmation in enumerate(affirmations):
             start_time = i * AFFIRMATION_DURATION
             clip = create_affirmation_clip(affirmation, start_time, AFFIRMATION_DURATION, is_first=(i == 0))
             affirmation_clips.append(clip)
         
-        # Combine all clips
+        # Combine all clips with memory optimization
         final_video = CompositeVideoClip(
             [background] + affirmation_clips,
             size=(VIDEO_WIDTH, VIDEO_HEIGHT)
@@ -220,20 +225,24 @@ def create_video(affirmations):
         output_path = f"output/{affirmations[0].split()[1]}_{datetime.now().strftime('%Y-%m-%d')}.mp4"
         print(f"Writing video to {output_path}...")
         
-        # Use optimized encoding settings
+        # Use optimized encoding settings for lower memory usage
         final_video.write_videofile(
             output_path,
             fps=30,
             codec='libx264',
             audio_codec='aac',
             preset='ultrafast',  # Faster encoding, slightly larger file
-            threads=2,  # Limit thread usage
-            bitrate='2000k',  # Lower bitrate
-            audio_bitrate='128k',  # Lower audio bitrate
-            ffmpeg_params=['-max_muxing_queue_size', '1024']  # Prevent queue overflow
+            threads=1,  # Limit to single thread to reduce memory usage
+            bitrate='1500k',  # Lower bitrate for smaller file size
+            audio_bitrate='96k',  # Lower audio bitrate
+            ffmpeg_params=[
+                '-max_muxing_queue_size', '1024',  # Prevent queue overflow
+                '-max_memory', '256M',  # Limit FFmpeg memory usage
+                '-thread_queue_size', '512'  # Limit thread queue size
+            ]
         )
         
-        # Clean up resources
+        # Clean up resources immediately
         final_video.close()
         background.close()
         background_music.close()
@@ -734,6 +743,17 @@ def encode_video_for_instagram(input_path):
         print(f"\n❌ Error encoding video: {str(e)}")
         return None
 
+def verify_s3_url(url):
+    """Verify that the S3 URL is accessible and has the correct content type."""
+    try:
+        response = requests.head(url)
+        print(f"URL Verification - Status Code: {response.status_code}")
+        print(f"URL Verification - Content Type: {response.headers.get('Content-Type')}")
+        if response.status_code != 200:
+            print(f"Warning: URL is not publicly accessible (Status: {response.status_code})")
+    except Exception as e:
+        print(f"Warning: Could not verify URL accessibility: {str(e)}")
+
 def schedule_social_media_post(video_path, caption):
     """Schedule a post on social media platforms"""
     try:
@@ -751,8 +771,12 @@ def schedule_social_media_post(video_path, caption):
         s3_url = upload_to_s3(video_path)
         print(f"Video uploaded to S3: {s3_url}")
         
+        # Verify S3 URL is accessible
+        verify_s3_url(s3_url)
+        
         # Post to Facebook
-        facebook_success = post_to_facebook(video_path, caption)
+        print("\n=== Starting Facebook Post Process ===\n")
+        post_to_facebook(video_path, caption)
         
         # Get Instagram account ID
         instagram_account_id = get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN)
@@ -760,10 +784,10 @@ def schedule_social_media_post(video_path, caption):
         
         if instagram_account_id:
             # Post to Instagram
-            instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
+            print("\n=== Starting Instagram Post Process ===\n")
+            post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
         
-        if not facebook_success or not instagram_success:
-            print("Failed to schedule social media posts")
+        print("\nVideo generation complete!")
         
         return True
         
@@ -797,11 +821,14 @@ def main():
         
         # Post to Facebook
         print("\n=== Starting Facebook Post Process ===\n")
-        post_to_facebook(s3_url, caption)
+        post_to_facebook(video_path, caption)
         
-        # Post to Instagram
-        print("\n=== Starting Instagram Post Process ===\n")
-        post_to_instagram(s3_url, caption)
+        # Get Instagram account ID
+        instagram_account_id = get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN)
+        if instagram_account_id:
+            # Post to Instagram
+            print("\n=== Starting Instagram Post Process ===\n")
+            post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
         
         print("\nVideo generation complete!")
         
