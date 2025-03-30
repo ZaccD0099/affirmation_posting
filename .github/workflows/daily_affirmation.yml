@@ -56,6 +56,7 @@ jobs:
           exit 1
         fi
         echo "Assets found successfully"
+        ls -la assets/
         
     - name: Run affirmation script with retries
       env:
@@ -88,10 +89,4 @@ jobs:
           exit 1
         fi
         echo "Video generated successfully"
-      
-    - name: Upload generated video
-      uses: actions/upload-artifact@v4
-      with:
-        name: affirmation-video
-        path: output/*.mp4
-        retention-days: 7  # Keep artifacts for 7 days 
+        ls -la output/ 
