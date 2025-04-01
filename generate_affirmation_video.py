@@ -1,4 +1,12 @@
 import os
+import sys
+import json
+import time
+import random
+import subprocess
+import traceback
+import requests
+import psutil
 from datetime import datetime, timedelta
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
 from moviepy.video.tools.segmenting import findObjects
@@ -9,19 +17,56 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import pickle
-from PIL import Image, ImageOps
-import json
-from openai import OpenAI
-import requests
-import time
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 import boto3
 from botocore.exceptions import ClientError
-import subprocess
+import logging
 from dotenv import load_dotenv
-import traceback
+from functools import wraps
+from openai import OpenAI
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def log_memory_usage(func):
+    """Decorator to log memory usage before and after function execution"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        process = psutil.Process()
+        before_mem = process.memory_info().rss / 1024 / 1024  # Convert to MB
+        logger.info(f"Memory usage before {func.__name__}: {before_mem:.2f} MB")
+        
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        
+        after_mem = process.memory_info().rss / 1024 / 1024  # Convert to MB
+        duration = end_time - start_time
+        
+        logger.info(f"Memory usage after {func.__name__}: {after_mem:.2f} MB")
+        logger.info(f"Memory difference: {after_mem - before_mem:.2f} MB")
+        logger.info(f"Duration: {duration:.2f} seconds")
+        
+        return result
+    return wrapper
+
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    process = psutil.Process()
+    return process.memory_info().rss / 1024 / 1024
+
+def log_memory_peak():
+    """Log peak memory usage"""
+    process = psutil.Process()
+    peak_mem = process.memory_info().rss / 1024 / 1024
+    logger.info(f"Peak memory usage: {peak_mem:.2f} MB")
 
 # Load environment variables
 load_dotenv()
+
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 # Constants
 VIDEO_WIDTH = 1080
@@ -34,9 +79,6 @@ BACKGROUND_MUSIC_VOLUME = 0.3  # 30% volume for background music
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
 SHEET_NAME = 'Video Captions'
-
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Facebook/Instagram API Configuration
 FACEBOOK_API_URL = 'https://graph.facebook.com/v18.0'
@@ -134,6 +176,7 @@ def get_predefined_affirmations():
         "I trust in my journey and growth"
     ]
 
+@log_memory_usage
 def create_affirmation_clip(text, start_time, duration, is_first=False):
     """Create a video clip for a single affirmation with fade in/out effects."""
     # Create text clip with fade in/out
@@ -163,102 +206,62 @@ def create_affirmation_clip(text, start_time, duration, is_first=False):
     
     return text_clip
 
+@log_memory_usage
 def create_video(affirmations):
     """Create the final video with all affirmations and background music."""
-    try:
-        # Load background image (expecting a JPG or PNG file)
-        background_path = "assets/Iphone_Affirmation_Background.jpg"
-        if not os.path.exists(background_path):
-            raise FileNotFoundError(f"Background image not found at {background_path}")
-        
-        # Load and resize background image using PIL with memory optimization
-        with Image.open(background_path) as img:
-            # Convert to RGB mode to ensure compatibility
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            # Resize with LANCZOS resampling for better quality
-            img = img.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
-            # Save with JPEG quality optimization
-            img.save("temp_background.jpg", 'JPEG', quality=85, optimize=True)
-        
-        # Load background image with memory optimization
-        background = ImageClip("temp_background.jpg")
-        background = background.set_duration(TOTAL_DURATION)
-        
-        # Load background music with optimized settings
-        background_music = AudioFileClip("assets/background_music_ambient.mp3")
-        background_music = background_music.set_duration(TOTAL_DURATION)
-        background_music = background_music.volumex(BACKGROUND_MUSIC_VOLUME)
-        
-        # Create clips for each affirmation with memory optimization
-        affirmation_clips = []
-        for i, affirmation in enumerate(affirmations):
-            start_time = i * AFFIRMATION_DURATION
-            clip = create_affirmation_clip(affirmation, start_time, AFFIRMATION_DURATION, is_first=(i == 0))
-            affirmation_clips.append(clip)
-        
-        # Combine all clips with memory optimization
-        final_video = CompositeVideoClip(
-            [background] + affirmation_clips,
-            size=(VIDEO_WIDTH, VIDEO_HEIGHT)
-        )
-        
-        # Set audio
-        final_video = final_video.set_audio(background_music)
-        
-        # Verify video meets Instagram requirements
-        if final_video.duration < 3:
-            print("Warning: Video duration is less than 3 seconds. Instagram requires at least 3 seconds.")
-            final_video = final_video.set_duration(3)
-        
-        if final_video.audio is None:
-            print("Warning: Video has no audio. Adding silent audio track.")
-            silent_audio = AudioClip(lambda t: 0, duration=final_video.duration)
-            final_video = final_video.set_audio(silent_audio)
-        
-        # Verify aspect ratio
-        if final_video.w != 1080 or final_video.h != 1920:
-            print("Warning: Video aspect ratio is not 9:16 (1080x1920). Resizing...")
-            final_video = final_video.resize((1080, 1920))
-        
-        # Write video with optimized settings
-        output_path = f"output/{affirmations[0].split()[1]}_{datetime.now().strftime('%Y-%m-%d')}.mp4"
-        print(f"Writing video to {output_path}...")
-        
-        # Use optimized encoding settings for lower memory usage
-        final_video.write_videofile(
-            output_path,
-            fps=30,
-            codec='libx264',
-            audio_codec='aac',
-            preset='ultrafast',  # Faster encoding, slightly larger file
-            threads=1,  # Limit to single thread to reduce memory usage
-            bitrate='1500k',  # Lower bitrate for smaller file size
-            audio_bitrate='96k',  # Lower audio bitrate
-            ffmpeg_params=[
-                '-max_muxing_queue_size', '1024',  # Prevent queue overflow
-                '-max_memory', '256M',  # Limit FFmpeg memory usage
-                '-thread_queue_size', '512'  # Limit thread queue size
-            ]
-        )
-        
-        # Clean up resources immediately
-        final_video.close()
-        background.close()
-        background_music.close()
-        for clip in affirmation_clips:
-            clip.close()
-        
-        # Remove temporary files
-        if os.path.exists("temp_background.jpg"):
-            os.remove("temp_background.jpg")
-        
-        return output_path
-        
-    except Exception as e:
-        print(f"Error in create_video: {str(e)}")
-        traceback.print_exc()
-        raise
+    # Load background image (expecting a JPG or PNG file)
+    background_path = "assets/Iphone_Affirmation_Background.jpg"  # Updated filename
+    if not os.path.exists(background_path):
+        raise FileNotFoundError(f"Background image not found at {background_path}")
+    
+    # Load and resize background image using PIL
+    with Image.open(background_path) as img:
+        img = img.resize((VIDEO_WIDTH, VIDEO_HEIGHT), Image.Resampling.LANCZOS)
+        img.save("temp_background.jpg")
+    
+    # Load background image
+    background = ImageClip("temp_background.jpg")
+    background = background.set_duration(TOTAL_DURATION)
+    
+    # Load background music
+    background_music = AudioFileClip("assets/background_music_ambient.mp3")
+    background_music = background_music.set_duration(TOTAL_DURATION)
+    background_music = background_music.volumex(BACKGROUND_MUSIC_VOLUME)
+    
+    # Create clips for each affirmation
+    affirmation_clips = []
+    for i, affirmation in enumerate(affirmations):
+        start_time = i * AFFIRMATION_DURATION
+        clip = create_affirmation_clip(affirmation, start_time, AFFIRMATION_DURATION, is_first=(i == 0))
+        affirmation_clips.append(clip)
+    
+    # Combine all clips
+    final_video = CompositeVideoClip(
+        [background] + affirmation_clips,
+        size=(VIDEO_WIDTH, VIDEO_HEIGHT)
+    )
+    
+    # Set audio
+    final_video = final_video.set_audio(background_music)
+    
+    # Verify video meets Instagram requirements
+    if final_video.duration < 3:
+        print("Warning: Video duration is less than 3 seconds. Instagram requires at least 3 seconds.")
+        # Extend the video to meet minimum duration
+        final_video = final_video.set_duration(3)
+    
+    if final_video.audio is None:
+        print("Warning: Video has no audio. Adding silent audio track.")
+        # Add silent audio track
+        silent_audio = AudioClip(lambda t: 0, duration=final_video.duration)
+        final_video = final_video.set_audio(silent_audio)
+    
+    # Verify aspect ratio
+    if final_video.w != 1080 or final_video.h != 1920:
+        print("Warning: Video aspect ratio is not 9:16 (1080x1920). Resizing...")
+        final_video = final_video.resize((1080, 1920))
+    
+    return final_video
 
 def upload_to_google_drive(file_path):
     """Upload the video to Google Drive."""
@@ -677,6 +680,7 @@ def post_to_instagram(video_path, caption, access_token, instagram_account_id):
         print(f"\n❌ Error posting to Instagram: {str(e)}")
         return False
 
+@log_memory_usage
 def encode_video_for_instagram(input_path):
     """
     Re-encode video to meet Instagram Reels requirements with updated settings.
@@ -743,17 +747,6 @@ def encode_video_for_instagram(input_path):
         print(f"\n❌ Error encoding video: {str(e)}")
         return None
 
-def verify_s3_url(url):
-    """Verify that the S3 URL is accessible and has the correct content type."""
-    try:
-        response = requests.head(url)
-        print(f"URL Verification - Status Code: {response.status_code}")
-        print(f"URL Verification - Content Type: {response.headers.get('Content-Type')}")
-        if response.status_code != 200:
-            print(f"Warning: URL is not publicly accessible (Status: {response.status_code})")
-    except Exception as e:
-        print(f"Warning: Could not verify URL accessibility: {str(e)}")
-
 def schedule_social_media_post(video_path, caption):
     """Schedule a post on social media platforms"""
     try:
@@ -771,12 +764,8 @@ def schedule_social_media_post(video_path, caption):
         s3_url = upload_to_s3(video_path)
         print(f"Video uploaded to S3: {s3_url}")
         
-        # Verify S3 URL is accessible
-        verify_s3_url(s3_url)
-        
         # Post to Facebook
-        print("\n=== Starting Facebook Post Process ===\n")
-        post_to_facebook(video_path, caption)
+        facebook_success = post_to_facebook(video_path, caption)
         
         # Get Instagram account ID
         instagram_account_id = get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN)
@@ -784,10 +773,10 @@ def schedule_social_media_post(video_path, caption):
         
         if instagram_account_id:
             # Post to Instagram
-            print("\n=== Starting Instagram Post Process ===\n")
-            post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
+            instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
         
-        print("\nVideo generation complete!")
+        if not facebook_success or not instagram_success:
+            print("Failed to schedule social media posts")
         
         return True
         
@@ -796,46 +785,86 @@ def schedule_social_media_post(video_path, caption):
         return False
 
 def main():
-    """Main function to generate and post affirmations."""
+    """Main function to generate and post affirmation video."""
     try:
+        logger.info("Starting video generation process")
+        initial_memory = get_memory_usage()
+        logger.info(f"Initial memory usage: {initial_memory:.2f} MB")
+        
         # Generate affirmations and caption
         theme, affirmations, caption = generate_affirmations_and_caption()
-        print(f"\nGenerated Theme: {theme}")
-        print(f"Generated Affirmations: {affirmations}")
-        print(f"\nGenerated Caption:\n{caption}\n")
+        logger.info(f"Generated Theme: {theme}")
+        logger.info("Generated Affirmations: %s", affirmations)
+        logger.info("\nGenerated Caption:\n%s", caption)
         
         # Create video
-        print("\nCreating video...")
-        video_path = create_video(affirmations)
+        logger.info("\nCreating video...")
+        video = create_video(affirmations)
         
-        # Schedule posts on social media
-        print("\nScheduling posts on social media...")
+        # Save video
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True)
+        video_path = os.path.join(output_dir, f"{theme}_{datetime.now().strftime('%Y-%m-%d')}.mp4")
+        logger.info(f"Writing video to {video_path}...")
         
-        # Upload to S3
-        print(f"Uploading {os.path.basename(video_path)} to S3...")
+        # Monitor memory during video writing
+        before_write = get_memory_usage()
+        logger.info(f"Memory before video writing: {before_write:.2f} MB")
+        
+        video.write_videofile(
+            video_path,
+            fps=30,
+            codec='libx264',
+            audio_codec='aac',
+            temp_audiofile="temp-audio.m4a",
+            remove_temp=True,
+            preset='ultrafast',  # Faster encoding, less memory usage
+            threads=2,  # Limit thread usage
+            bitrate='2000k',  # Lower bitrate for smaller file size
+            ffmpeg_params=[
+                '-movflags', '+faststart'  # Enable fast start for streaming
+            ]
+        )
+        
+        after_write = get_memory_usage()
+        logger.info(f"Memory after video writing: {after_write:.2f} MB")
+        logger.info(f"Memory difference during writing: {after_write - before_write:.2f} MB")
+        
+        logger.info("\nScheduling posts on social media...")
+        
+        # Upload to S3 and get URL
         s3_url = upload_to_s3(video_path)
-        print(f"Successfully uploaded to S3. Public URL: {s3_url}")
-        
-        # Verify S3 URL is accessible
-        verify_s3_url(s3_url)
+        if not s3_url:
+            logger.error("Failed to upload video to S3")
+            return
+        logger.info(f"Video uploaded to S3: {s3_url}")
         
         # Post to Facebook
-        print("\n=== Starting Facebook Post Process ===\n")
-        post_to_facebook(video_path, caption)
+        facebook_success = post_to_facebook(video_path, caption)
         
-        # Get Instagram account ID
-        instagram_account_id = get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN)
-        if instagram_account_id:
-            # Post to Instagram
-            print("\n=== Starting Instagram Post Process ===\n")
-            post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
+        # Post to Instagram
+        instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN))
         
-        print("\nVideo generation complete!")
+        if not facebook_success or not instagram_success:
+            logger.error("Failed to schedule social media posts")
+        
+        # Clean up temporary files
+        if os.path.exists("temp_background.jpg"):
+            os.remove("temp_background.jpg")
+        video.close()
+        
+        # Log final memory usage
+        final_memory = get_memory_usage()
+        logger.info(f"Final memory usage: {final_memory:.2f} MB")
+        logger.info(f"Total memory increase: {final_memory - initial_memory:.2f} MB")
+        log_memory_peak()
+        
+        logger.info("Video generation complete!")
         
     except Exception as e:
-        print(f"\nError in main function: {str(e)}")
+        logger.error(f"Error in main function: {str(e)}")
         traceback.print_exc()
-        raise
+        log_memory_peak()  # Log peak memory even if there's an error
 
 if __name__ == "__main__":
     main() 

@@ -23,15 +23,10 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-token.pickle
 
-# AWS
-aws/
-.aws/
-
-# Output files
-output/
-*.mp4
+# Virtual Environment
+venv/
+ENV/
 
 # IDE
 .idea/
@@ -39,6 +34,16 @@ output/
 *.swp
 *.swo
 
-# OS
+# Project specific
+output/
+temp_background.jpg
+temp-audio.m4a
+token.pickle
+credentials.json
+
+# Logs
+*.log
+
+# OS specific
 .DS_Store
 Thumbs.db 
