@@ -529,8 +529,8 @@ def encode_video_for_instagram(input_path):
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
             '-c:v', 'libx264',
             '-preset', 'ultrafast',     # Faster encoding for Render
-            '-profile:v', 'baseline',   # More compatible profile
-            '-level:v', '3.0',          # Lower level for better compatibility
+            '-profile:v', 'high',       # Use high profile for better compatibility
+            '-level:v', '4.0',          # Level 4.0 supports 1080x1920
             '-b:v', '2M',               # Lower bitrate
             '-maxrate', '2.5M',
             '-bufsize', '2.5M',
@@ -548,8 +548,8 @@ def encode_video_for_instagram(input_path):
         
         print("\nRe-encoding video for Instagram Reels with updated settings:")
         print("- Resolution: 1080x1920 (9:16 aspect ratio)")
-        print("- Video codec: H.264 (libx264) baseline profile")
-        print("- Profile/Level: baseline/3.0")
+        print("- Video codec: H.264 (libx264) high profile")
+        print("- Profile/Level: high/4.0")
         print("- Frame rate: 30 fps (constant)")
         print("- Video bitrate: 2 Mbps")
         print("- Audio codec: AAC-LC")
