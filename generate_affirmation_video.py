@@ -11,12 +11,6 @@ from datetime import datetime, timedelta
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
 from moviepy.video.tools.segmenting import findObjects
 import tempfile
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-import pickle
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import boto3
 from botocore.exceptions import ClientError
@@ -77,8 +71,6 @@ BACKGROUND_MUSIC_VOLUME = 0.3  # 30% volume for background music
 
 # API Keys and Credentials from environment variables
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
-SHEET_NAME = 'Video Captions'
 
 # Facebook/Instagram API Configuration
 FACEBOOK_API_URL = 'https://graph.facebook.com/v18.0'
@@ -263,152 +255,9 @@ def create_video(affirmations):
     
     return final_video
 
-def upload_to_google_drive(file_path):
-    """Upload the video to Google Drive."""
-    try:
-        SCOPES = ['https://www.googleapis.com/auth/drive.file']
-        creds = None
-        
-        # Load saved credentials if they exist
-        if os.path.exists('token.pickle'):
-            with open('token.pickle', 'rb') as token:
-                creds = pickle.load(token)
-        
-        # If credentials are invalid or don't exist, let the user authenticate
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-            
-            # Save credentials for future use
-            with open('token.pickle', 'wb') as token:
-                pickle.dump(creds, token)
-        
-        # Create Drive API service
-        service = build('drive', 'v3', credentials=creds)
-        
-        # Get the filename from the path
-        file_name = os.path.basename(file_path)
-        
-        # Prepare the file metadata
-        file_metadata = {
-            'name': file_name,
-            'parents': ['16j0edDvMlMes_LUWOni8qStK4qEQS8TK']  # Updated folder ID
-        }
-        
-        # Upload the file
-        media = MediaFileUpload(file_path, resumable=True)
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id'
-        ).execute()
-        
-        print(f"File uploaded successfully. File ID: {file.get('id')}")
-        return file.get('id')
-        
-    except Exception as e:
-        print(f"Error uploading to Google Drive: {str(e)}")
-        return None
-
-def update_spreadsheet(video_name, caption):
-    """Update the Google Sheet with video name and caption."""
-    try:
-        SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = None
-        
-        # Load saved credentials if they exist
-        if os.path.exists('token.pickle'):
-            with open('token.pickle', 'rb') as token:
-                creds = pickle.load(token)
-        
-        # If credentials are invalid or don't exist, let the user authenticate
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-            
-            # Save credentials for future use
-            with open('token.pickle', 'wb') as token:
-                pickle.dump(creds, token)
-        
-        # Create Sheets API service
-        service = build('sheets', 'v4', credentials=creds)
-        
-        # First, verify the spreadsheet exists and is accessible
-        try:
-            spreadsheet = service.spreadsheets().get(
-                spreadsheetId=SPREADSHEET_ID
-            ).execute()
-            print(f"Successfully connected to spreadsheet: {spreadsheet.get('properties', {}).get('title')}")
-        except Exception as e:
-            print(f"Error accessing spreadsheet: {str(e)}")
-            return False
-        
-        # Get the next empty row
-        range_name = f'{SHEET_NAME}!A:B'
-        try:
-            result = service.spreadsheets().values().get(
-                spreadsheetId=SPREADSHEET_ID,
-                range=range_name
-            ).execute()
-            
-            values = result.get('values', [])
-            next_row = len(values) + 1
-            
-            # Prepare the data
-            body = {
-                'values': [[video_name, caption]]
-            }
-            
-            # Update the sheet
-            result = service.spreadsheets().values().update(
-                spreadsheetId=SPREADSHEET_ID,
-                range=f'{SHEET_NAME}!A{next_row}:B{next_row}',
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-            
-            print(f"Updated spreadsheet at row {next_row}")
-            return True
-            
-        except Exception as e:
-            print(f"Error updating sheet values: {str(e)}")
-            return False
-        
-    except Exception as e:
-        print(f"Error updating spreadsheet: {str(e)}")
-        return False
-
-def upload_to_imgbb(file_path):
-    """Upload video to ImgBB and return the public URL."""
-    try:
-        with open(file_path, 'rb') as f:
-            files = {'image': f}
-            response = requests.post(
-                'https://api.imgbb.com/1/upload',
-                files=files,
-                data={'key': IMGBB_API_KEY}
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get('success'):
-                return data['data']['url']
-            else:
-                print("Error uploading to ImgBB:", data.get('error'))
-                return None
-    except Exception as e:
-        print(f"Error uploading to ImgBB: {str(e)}")
-        return None
-
 def upload_to_s3(file_path):
-    """Upload video to S3 and return the public URL."""
+    """Upload a file to AWS S3."""
     try:
-        # Create S3 client
         s3_client = boto3.client(
             's3',
             aws_access_key_id=AWS_ACCESS_KEY_ID,
@@ -419,37 +268,25 @@ def upload_to_s3(file_path):
         # Get the filename from the path
         file_name = os.path.basename(file_path)
         
-        # Upload the file with public-read ACL
-        print(f"Uploading {file_name} to S3...")
-        s3_client.upload_file(
-            file_path,
-            S3_BUCKET_NAME,
-            file_name,
-            ExtraArgs={
-                'ACL': 'public-read',
-                'ContentType': 'video/mp4'
-            }
-        )
+        # Upload the file
+        s3_client.upload_file(file_path, S3_BUCKET_NAME, file_name)
         
         # Generate the public URL
-        public_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{file_name}"
-        print(f"Successfully uploaded to S3. Public URL: {public_url}")
+        url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{file_name}"
         
-        # Verify the file is accessible
-        try:
-            response = requests.head(public_url)
+        # Verify the URL is accessible
+        response = requests.head(url)
+        if response.status_code == 200:
+            print(f"Successfully uploaded to S3. Public URL: {url}")
             print(f"URL Verification - Status Code: {response.status_code}")
-            print(f"URL Verification - Content Type: {response.headers.get('Content-Type')}")
-            if response.status_code != 200:
-                print(f"Warning: URL is not publicly accessible (Status: {response.status_code})")
-        except Exception as e:
-            print(f"Warning: Could not verify URL accessibility: {str(e)}")
-        
-        return public_url
-        
-    except ClientError as e:
+            print(f"URL Verification - Content Type: {response.headers.get('content-type', 'unknown')}")
+            return url
+        else:
+            print(f"Warning: URL verification failed with status code {response.status_code}")
+            return url
+    except Exception as e:
         print(f"Error uploading to S3: {str(e)}")
-        return None
+        raise
 
 def get_instagram_account_id(page_id, access_token):
     """Get the Instagram Business Account ID associated with the Facebook Page."""
@@ -680,109 +517,27 @@ def post_to_instagram(video_path, caption, access_token, instagram_account_id):
         print(f"\n❌ Error posting to Instagram: {str(e)}")
         return False
 
-@log_memory_usage
-def encode_video_for_instagram(input_path):
-    """
-    Re-encode video to meet Instagram Reels requirements with updated settings.
-    """
-    output_path = input_path.replace('.mp4', '_instagram.mp4')
-    try:
-        # FFmpeg command with updated Instagram Reels settings
-        cmd = [
-            'ffmpeg', '-i', input_path,
-            '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
-            '-c:v', 'libx264',
-            '-preset', 'medium',     # Better quality preset
-            '-profile:v', 'main',    # Main profile instead of baseline
-            '-level:v', '4.0',       # Higher level for better compatibility
-            '-b:v', '4M',            # Higher bitrate for better quality
-            '-maxrate', '5M',
-            '-bufsize', '5M',
-            '-r', '30',
-            '-fps_mode', 'cfr',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            '-ac', '2',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-y',
-            output_path
-        ]
-        
-        print("\nRe-encoding video for Instagram Reels with updated settings:")
-        print("- Resolution: 1080x1920 (9:16 aspect ratio)")
-        print("- Video codec: H.264 (libx264) main profile")
-        print("- Profile/Level: main/4.0")
-        print("- Frame rate: 30 fps (constant)")
-        print("- Video bitrate: 4 Mbps")
-        print("- Audio codec: AAC-LC")
-        print("- Audio bitrate: 128 Kbps")
-        print("- Audio sample rate: 44.1 kHz")
-        print("- Audio channels: Stereo")
-        print("- Fast start enabled for streaming")
-        
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            print(f"\n❌ Error encoding video: {result.stderr}")
-            return None
-            
-        print("\n✅ Video re-encoding complete")
-        
-        # Verify the output file exists and has a reasonable size
-        if not os.path.exists(output_path):
-            print("\n❌ Error: Output file was not created")
-            return None
-            
-        file_size = os.path.getsize(output_path)
-        print(f"\nOutput file size: {file_size / (1024*1024):.2f} MB")
-        
-        if file_size > 100 * 1024 * 1024:  # 100MB
-            print("\n❌ Error: Output file is too large for Instagram (>100MB)")
-            return None
-            
-        return output_path
-    except Exception as e:
-        print(f"\n❌ Error encoding video: {str(e)}")
-        return None
-
 def schedule_social_media_post(video_path, caption):
-    """Schedule a post on social media platforms"""
+    """Schedule posts on social media platforms."""
     try:
-        # Upload to Google Drive
-        file_id = upload_to_google_drive(video_path)
-        print(f"Video uploaded to Google Drive with ID: {file_id}")
-        
-        # Update spreadsheet
-        try:
-            update_spreadsheet(video_path, caption)
-        except Exception as e:
-            print(f"Error accessing spreadsheet: {str(e)}")
-        
-        # Upload to S3
-        s3_url = upload_to_s3(video_path)
-        print(f"Video uploaded to S3: {s3_url}")
+        # Upload video to S3
+        print("\nScheduling posts on social media...")
+        video_url = upload_to_s3(video_path)
+        print(f"Video uploaded to S3: {video_url}")
         
         # Post to Facebook
-        facebook_success = post_to_facebook(video_path, caption)
+        print("\n=== Starting Facebook Post Process ===")
+        post_to_facebook(video_path, caption)
         
-        # Get Instagram account ID
+        # Post to Instagram
+        print("\n=== Starting Instagram Post Process ===")
         instagram_account_id = get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN)
-        print(f"Debug - Instagram Account ID: {instagram_account_id}")
-        
-        if instagram_account_id:
-            # Post to Instagram
-            instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
-        
-        if not facebook_success or not instagram_success:
-            print("Failed to schedule social media posts")
-        
-        return True
+        post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, instagram_account_id)
         
     except Exception as e:
-        print(f"Error scheduling social media post: {str(e)}")
-        return False
+        print(f"Error in schedule_social_media_post: {str(e)}")
+        traceback.print_exc()
+        raise
 
 def main():
     """Main function to generate and post affirmation video."""
@@ -832,21 +587,8 @@ def main():
         
         logger.info("\nScheduling posts on social media...")
         
-        # Upload to S3 and get URL
-        s3_url = upload_to_s3(video_path)
-        if not s3_url:
-            logger.error("Failed to upload video to S3")
-            return
-        logger.info(f"Video uploaded to S3: {s3_url}")
-        
-        # Post to Facebook
-        facebook_success = post_to_facebook(video_path, caption)
-        
-        # Post to Instagram
-        instagram_success = post_to_instagram(video_path, caption, FACEBOOK_ACCESS_TOKEN, get_instagram_account_id(FACEBOOK_PAGE_ID, FACEBOOK_ACCESS_TOKEN))
-        
-        if not facebook_success or not instagram_success:
-            logger.error("Failed to schedule social media posts")
+        # Post to social media
+        schedule_social_media_post(video_path, caption)
         
         # Clean up temporary files
         if os.path.exists("temp_background.jpg"):
