@@ -523,17 +523,17 @@ def encode_video_for_instagram(input_path):
     """
     output_path = input_path.replace('.mp4', '_instagram.mp4')
     try:
-        # FFmpeg command with updated Instagram Reels settings
+        # FFmpeg command with more compatible settings
         cmd = [
             'ffmpeg', '-i', input_path,
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
             '-c:v', 'libx264',
-            '-preset', 'medium',     # Better quality preset
-            '-profile:v', 'main',    # Main profile instead of baseline
-            '-level:v', '4.0',       # Higher level for better compatibility
-            '-b:v', '4M',            # Higher bitrate for better quality
-            '-maxrate', '5M',
-            '-bufsize', '5M',
+            '-preset', 'ultrafast',     # Faster encoding for Render
+            '-profile:v', 'baseline',   # More compatible profile
+            '-level:v', '3.0',          # Lower level for better compatibility
+            '-b:v', '2M',               # Lower bitrate
+            '-maxrate', '2.5M',
+            '-bufsize', '2.5M',
             '-r', '30',
             '-fps_mode', 'cfr',
             '-c:a', 'aac',
@@ -548,20 +548,37 @@ def encode_video_for_instagram(input_path):
         
         print("\nRe-encoding video for Instagram Reels with updated settings:")
         print("- Resolution: 1080x1920 (9:16 aspect ratio)")
-        print("- Video codec: H.264 (libx264) main profile")
-        print("- Profile/Level: main/4.0")
+        print("- Video codec: H.264 (libx264) baseline profile")
+        print("- Profile/Level: baseline/3.0")
         print("- Frame rate: 30 fps (constant)")
-        print("- Video bitrate: 4 Mbps")
+        print("- Video bitrate: 2 Mbps")
         print("- Audio codec: AAC-LC")
         print("- Audio bitrate: 128 Kbps")
         print("- Audio sample rate: 44.1 kHz")
         print("- Audio channels: Stereo")
         print("- Fast start enabled for streaming")
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Run FFmpeg with output capture
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
         
-        if result.returncode != 0:
-            print(f"\n❌ Error encoding video: {result.stderr}")
+        # Read output in real-time
+        while True:
+            output = process.stderr.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                print(output.strip())
+        
+        # Get the return code
+        return_code = process.poll()
+        
+        if return_code != 0:
+            print(f"\n❌ Error encoding video (return code: {return_code})")
             return None
             
         print("\n✅ Video re-encoding complete")
@@ -581,6 +598,7 @@ def encode_video_for_instagram(input_path):
         return output_path
     except Exception as e:
         print(f"\n❌ Error encoding video: {str(e)}")
+        traceback.print_exc()
         return None
 
 def schedule_social_media_post(video_path, caption):
