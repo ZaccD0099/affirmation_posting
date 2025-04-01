@@ -523,17 +523,17 @@ def encode_video_for_instagram(input_path):
     """
     output_path = input_path.replace('.mp4', '_instagram.mp4')
     try:
-        # FFmpeg command with more compatible settings
+        # FFmpeg command with more memory-efficient settings
         cmd = [
             'ffmpeg', '-i', input_path,
             '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',     # Faster encoding for Render
-            '-profile:v', 'high',       # Use high profile for better compatibility
-            '-level:v', '4.0',          # Level 4.0 supports 1080x1920
-            '-b:v', '2M',               # Lower bitrate
-            '-maxrate', '2.5M',
-            '-bufsize', '2.5M',
+            '-preset', 'veryfast',     # Faster encoding with less memory usage
+            '-profile:v', 'baseline',   # More compatible profile
+            '-level:v', '3.1',          # Level 3.1 supports 1080x1920
+            '-b:v', '1.5M',             # Lower bitrate
+            '-maxrate', '2M',
+            '-bufsize', '2M',
             '-r', '30',
             '-fps_mode', 'cfr',
             '-c:a', 'aac',
@@ -542,23 +542,25 @@ def encode_video_for_instagram(input_path):
             '-ac', '2',
             '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart',
+            '-threads', '4',            # Limit number of threads
             '-y',
             output_path
         ]
         
         print("\nRe-encoding video for Instagram Reels with updated settings:")
         print("- Resolution: 1080x1920 (9:16 aspect ratio)")
-        print("- Video codec: H.264 (libx264) high profile")
-        print("- Profile/Level: high/4.0")
+        print("- Video codec: H.264 (libx264) baseline profile")
+        print("- Profile/Level: baseline/3.1")
         print("- Frame rate: 30 fps (constant)")
-        print("- Video bitrate: 2 Mbps")
+        print("- Video bitrate: 1.5 Mbps")
         print("- Audio codec: AAC-LC")
         print("- Audio bitrate: 128 Kbps")
         print("- Audio sample rate: 44.1 kHz")
         print("- Audio channels: Stereo")
         print("- Fast start enabled for streaming")
+        print("- Thread count: 4")
         
-        # Run FFmpeg with output capture
+        # Run FFmpeg with output capture and timeout
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -566,8 +568,14 @@ def encode_video_for_instagram(input_path):
             universal_newlines=True
         )
         
-        # Read output in real-time
+        # Read output in real-time with timeout
+        start_time = time.time()
         while True:
+            if time.time() - start_time > 300:  # 5-minute timeout
+                process.terminate()
+                print("\n❌ Error: Video encoding timed out after 5 minutes")
+                return None
+                
             output = process.stderr.readline()
             if output == '' and process.poll() is not None:
                 break
