@@ -1,4 +1,6 @@
 import os
+from dotenv import load_dotenv
+from openai import OpenAI
 import sys
 import json
 import time
@@ -15,9 +17,7 @@ from PIL import Image, ImageOps, ImageDraw, ImageFont
 import boto3
 from botocore.exceptions import ClientError
 import logging
-from dotenv import load_dotenv
 from functools import wraps
-from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -60,7 +60,7 @@ def log_memory_peak():
 load_dotenv()
 
 # Initialize OpenAI client
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Constants
 VIDEO_WIDTH = 1080
