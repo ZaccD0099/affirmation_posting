@@ -2,11 +2,26 @@ services:
   - type: worker
     name: affirmation-poster
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python3 generate_affirmation_video.py
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg
+      pip install -r requirements.txt
+    startCommand: python3 generate_darkSunset_5sec.py
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.0
-    plan: free
-    schedule: "0 6,8,10,12,14,16,18,20,22,0 * * *"  # Runs at 6am, 8am, 10am, 12pm, 2pm, 4pm, 6pm, 8pm, 10pm, 12am CST
+        value: 3.9.0
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FACEBOOK_ACCESS_TOKEN
+        sync: false
+      - key: FACEBOOK_PAGE_ID
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: AWS_DEFAULT_REGION
+        sync: false
+    schedule: "0 18,20,22 * * *"  # Run at 6pm, 8pm, and 10pm CST
     timezone: America/Chicago  # CST timezone 
