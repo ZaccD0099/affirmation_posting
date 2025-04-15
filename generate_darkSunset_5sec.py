@@ -228,7 +228,7 @@ def create_video(affirmations, output_path='output/overlay_affirmation.mp4'):
         logger.error(f"Error creating video: {str(e)}")
         raise
 
-def get_caption(affirmations):
+def get_caption(affirmations, theme):
     """Generate a caption for social media posts."""
     try:
         client = OpenAI()
@@ -241,32 +241,43 @@ def get_caption(affirmations):
 The caption should:
 1. Be 1-2 sentences
 2. Be positive and uplifting
-3. Include relevant hashtags
-4. Encourage engagement
-5. Be under 200 characters
+3. Encourage engagement
+4. Be under 200 characters
 
 Respond with ONLY the caption text, no additional formatting or explanation."""
         
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a social media expert creating engaging captions."},
+                {"role": "system", "content": "You are an expert at creating engaging social media captions. Respond with ONLY the caption text."},
                 {"role": "user", "content": prompt}
             ]
         )
         
         caption = response.choices[0].message.content.strip()
-        return caption
+        
+        # Add the standard hashtags
+        standard_hashtags = "#Affirmations #DailyAffirmations #PositiveAffirmations #SelfLove #SelfCare #PositiveVibes #Motivation #Mindset #Gratitude #Positivity #Healing #Manifestation #Inspiration #Mindfulness #AffirmationOfTheDay #affirmationjournal"
+        
+        # Add theme-specific hashtag
+        theme_hashtag = f"#{theme.replace('-', '')}"
+        
+        # Combine caption and hashtags
+        full_caption = f"{caption}\n\n{standard_hashtags}\n{theme_hashtag}"
+        
+        return full_caption
         
     except Exception as e:
         logger.error(f"Error generating caption: {str(e)}")
-        return "Daily affirmations to brighten your day! ✨ #affirmations #positivity #mindset"
+        return "Start your day with positive affirmations! 🌟\n\n#Affirmations #DailyAffirmations #PositiveAffirmations #SelfLove #SelfCare #PositiveVibes #Motivation #Mindset #Gratitude #Positivity #Healing #Manifestation #Inspiration #Mindfulness #AffirmationOfTheDay #affirmationjournal"
 
 def main():
     try:
-        # Get random theme and generate affirmations
+        # Get random theme
         theme = get_random_theme()
         logger.info(f"Selected theme: {theme}")
+        
+        # Generate affirmations
         affirmations = generate_themed_affirmations(theme)
         logger.info("Generated affirmations:")
         for aff in affirmations:
@@ -276,15 +287,10 @@ def main():
         video_path = create_video(affirmations)
         
         # Generate caption
-        caption = get_caption(affirmations)
+        caption = get_caption(affirmations, theme)
         
         # Post to social media
-        post_success = post_to_social_media(video_path, caption)
-        
-        if post_success:
-            logger.info("Successfully generated and posted video")
-        else:
-            logger.error("Failed to post video to social media")
+        post_to_social_media(video_path, caption)
         
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
