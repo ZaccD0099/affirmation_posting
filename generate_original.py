@@ -18,6 +18,7 @@ import boto3
 from botocore.exceptions import ClientError
 import logging
 from functools import wraps
+import gc
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -82,6 +83,10 @@ AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 AWS_REGION = os.getenv('AWS_DEFAULT_REGION')
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
+
+# Create necessary directories
+os.makedirs('temp', exist_ok=True)
+os.makedirs('output', exist_ok=True)
 
 def generate_affirmations_and_caption():
     """Generate affirmations and caption using OpenAI API."""

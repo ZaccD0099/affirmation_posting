@@ -11,6 +11,10 @@ import subprocess
 import requests
 import boto3
 from botocore.exceptions import NoCredentialsError
+import datetime
+
+# Create necessary directories
+os.makedirs('output', exist_ok=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

@@ -11,6 +11,16 @@ import random
 from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, ColorClip
 from functools import wraps
 from post_to_social import post_to_social_media
+import gc
+from moviepy.config import change_settings
+import requests
+from PIL import Image, ImageDraw, ImageFont
+import boto3
+from datetime import datetime
+
+# Create necessary directories
+os.makedirs('temp', exist_ok=True)
+os.makedirs('output', exist_ok=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
